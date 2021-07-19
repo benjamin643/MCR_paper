@@ -1,0 +1,377 @@
+---
+title: "Narrative cell graph"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output: html_document
+highlighter: highlight.js
+---
+
+```{r setup, message=FALSE, echo=TRUE, warning=FALSE}
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(skimr)
+library(phenoptr)
+library(phenoptrReports)
+library(rtree)
+library(data.table)
+library(pivottabler)
+library(ggpubr)
+library(zoo)
+library(survival)
+library(lubridate)
+library(survminer)
+library(reReg)
+library(naniar)
+library(kableExtra)
+
+knitr::opts_chunk$set(echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+
+suppressMessages(library(tidyverse))
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+```
+
+
+```{r}
+ovarian_data <- read_cell_seg_data("~/Desktop/Research/ovarian_image_analyses/raw_data/Consolidated_data.txt")
+ovarian_data = ovarian_data %>%
+  filter(`Tissue Category` != "Glass")
+
+#removing initial descriptor characters from `Sample Name` variable so as to match with the format of the clinical data 
+ovarian_data$`Sample Name` = substr(ovarian_data$`Sample Name`, 21, 100)
+
+## Creating phenotype variables for the combinations 
+
+# Creating a control variable to identify the four control samples that are not related to the ovarian study
+ovarian_data = ovarian_data %>% mutate(control = case_when(
+  `Sample Name` == "A_Core[1,7,A]_[6035,51922].im3" ~ 1,
+  `Sample Name` == "A_Core[1,8,A]_[6099,54080].im3" ~ 1,
+  `Sample Name` == "B_Core[1,7,A]_[5838,48555].im3" ~ 1,
+  `Sample Name` == "B_Core[1,8,A]_[5838,50714].im3" ~ 1,
+  TRUE ~ 0,
+))
+
+#Filtering out the four control studies
+
+ovarian_data = ovarian_data %>% filter(control=="0")
+
+ovarian_data = ovarian_data %>% mutate(`Phenotype CD3 CD8`=case_when(
+  `Phenotype CD3` =="CD3+" & `Phenotype CD8`=="CD8+" ~ "CD3+ CD8+",
+  `Phenotype CD3` =="CD3+" & `Phenotype CD8` =="CD8-" ~ "CD3+ CD8-",
+  TRUE~ ""
+))
+
+ovarian_data = ovarian_data %>% mutate(`Phenotype CK pStat3`=case_when(
+  `Phenotype CK` == "CK+" & `Phenotype pStat3` =="pStat3+" ~ "CK+ pStat3+",
+  `Phenotype CK` == "CK+" & `Phenotype pStat3` =="pStat3-" ~ "CK+ pStat3-",
+  TRUE~""
+))
+
+
+ovarian_data = ovarian_data %>% mutate(`Phenotype CK Ki67`=case_when(
+    `Phenotype CK` == "CK+" & `Phenotype Ki67` == "Ki67+" ~ "CK+ Ki67+",
+    `Phenotype CK` == "CK+" & `Phenotype Ki67` == "Ki67-" ~ "CK+ Ki67-",
+  TRUE~""
+))
+
+
+
+ovarian_data = ovarian_data %>% mutate(`Phenotype CD68 pStat3` =case_when(
+  `Phenotype CD68` == "CD68+" & `Phenotype pStat3` =="pStat3+" ~ "CD68+ pStat3+",
+  `Phenotype CD68` == "CD68+" & `Phenotype pStat3` =="pStat3-" ~ "CD68+ pStat3-",
+
+  TRUE~""
+))
+
+ovarian_data = ovarian_data %>% mutate(`Phenotype CD19 pStat3` =case_when(
+  `Phenotype CD19` == "CD19+" & `Phenotype pStat3` =="pStat3+" ~ "CD19+ pStat3+",
+  `Phenotype CD19` == "CD19+" & `Phenotype pStat3` =="pStat3-" ~ "CD19+ pStat3-",
+  TRUE~""
+))
+
+#Adding IER3 
+
+ovarian_data = ovarian_data %>% mutate(`Phenotype IER3` =case_when(
+  `Entire Cell IER3 (Opal 620) Mean` >= quantile(`Entire Cell IER3 (Opal 620) Mean`,.8) ~ "IER3+",
+  `Entire Cell IER3 (Opal 620) Mean` < quantile(`Entire Cell IER3 (Opal 620) Mean`,.8) ~ "IER3-",
+  TRUE ~ ""
+ ))
+
+ovarian_data = ovarian_data %>% mutate(`Phenotype CK IER3`=case_when(
+    `Phenotype CK` == "CK+" & `Phenotype IER3` == "IER3+" ~ "CK+ IER3+",
+    `Phenotype CK` == "CK+" & `Phenotype IER3` == "IER3-" ~ "CK+ IER3-",
+  TRUE~""
+))
+
+ovarian_data = ovarian_data %>% mutate(`Phenotype CD3 CD8 Ki67`=case_when(
+    `Phenotype CD3` == "CD3+" & `Phenotype CD8` == "CD8+" & `Phenotype Ki67`=="Ki67+" ~ "CD3+ CD8+ Ki67+",
+`Phenotype CD3` == "CD3+" & `Phenotype CD8` == "CD8+" & `Phenotype Ki67`=="Ki67-" ~ "CD3+ CD8+ Ki67-",
+     `Phenotype CD3` == "CD3+" & `Phenotype CD8` == "CD8-" & `Phenotype Ki67`=="Ki67+" ~ "CD3+ CD8- Ki67+",
+    `Phenotype CD3` == "CD3+" & `Phenotype CD8` == "CD8-" & `Phenotype Ki67`=="Ki67-" ~ "CD3+ CD8- Ki67-",
+      TRUE~""
+))
+
+
+# Creating a variable to identify cells with all blank phenotypes 
+
+ovarian_data = ovarian_data %>% mutate(blank_cells=case_when(
+  `Phenotype CD68` != "" ~ 0,
+  `Phenotype Ki67` != "" ~ 0,
+  `Phenotype CK` != "" ~ 0,
+  `Phenotype CD19` != "" ~ 0,
+  `Phenotype pStat3` != "" ~ 0,
+  `Phenotype CD3` != "" ~ 0,
+  `Phenotype CD8` != "" ~ 0,
+  TRUE~ 1
+))
+
+
+#Joining clinical with data with ovarian data 
+
+
+clinical_data <- read_excel("~/Desktop/Research/ovarian_image_analyses/raw_data/Clinical_Attributes_and_more.xlsx", 
+col_types = c("numeric", "text", "numeric",  "text", "text", "numeric", "numeric",  "numeric", "text", "numeric", "date",  "date", "numeric", "numeric", "text",  "numeric", "numeric", "text", "date",  "date", "date", "text", "text", "text",   "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",   "numeric", "numeric", "numeric", 
+ "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text"))
+
+names(clinical_data)[names(clinical_data) == "Death (1=yes, 0=no)"] <- "Death"
+
+names(clinical_data)[names(clinical_data) == "BRCA Mutation Detected (Y=Test Positive, N=Test Negative, N/A=Not tested)"] <- "BRCA Type"
+
+names(clinical_data)[names(clinical_data) == "BRCA-mutation (Y=1, N=0, N/A = BLANK)"] <- "BRCA Binary"
+
+names(clinical_data)[names(clinical_data) == "Recurrence...19"] <- "Recurence1"
+
+names(clinical_data)[names(clinical_data) == "Recurrence...20"] <- "Recurence2"
+
+names(clinical_data)[names(clinical_data) == "Recurrence...21"] <- "Recurence3"
+
+
+#clinical_data <- clinical_data %>% select(`Sample Name`, `Death`, `Time to recurrence`, Recurrent, Recurrence...19, Recurrence...20, Recurrence...21, `Date of Diagnosis`, `Date of Death`, `Age at Diagnosis`, `IV/IP Chemo`, `Overall Survival`, `Grade`, `Avastin`, `Stage`, `Grade`, `Debulking` , )
+
+
+## There are 5 sample names in the distance data set that do not appear in the clinical data set. 
+
+## Changing format for date of death to be able to grab the still alive as of
+
+
+clinical_data_part2 <- read_excel("~/Desktop/Research/ovarian_image_analyses/raw_data/Clinical_Attributes_and_more.xlsx", 
+    col_types = c("numeric", "text", "numeric", 
+        "text", "text", "numeric", "numeric", 
+        "numeric", "text", "numeric", "text", 
+        "text", "numeric", "numeric", "text", 
+        "numeric", "numeric", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text"))
+
+clinical_data_part2 = clinical_data_part2 %>% select(`Sample Name`, `Date of Death`)
+
+#three different beginnings for alive as.... "Alive as", "Alive as of", "last visit"
+
+clinical_data_part2$`Date of Death` = gsub("last visit", "Alive as",clinical_data_part2$`Date of Death` )
+#setting up format of variable to be able to use substr. Need to chance "last visit" to Alive as.
+
+clinical_data_part2$`Date of Death` = gsub("Alive as of", "Alive as",clinical_data_part2$`Date of Death` )
+# setting up format of variable to be able to use substr. Need to chance "Alive as of" to "Alive as".
+
+clinical_data_part2$`Date of Death` = substr(clinical_data_part2$`Date of Death`, 10, 100)
+#now cutting off the first 10 string characters 
+
+
+#B_Core[1,1,B]_[7934,35665].im3 has alive as of date for 1/2019. Is this january 2019? 
+clinical_data_part2$`Date of Death` =  mdy(clinical_data_part2$`Date of Death`)
+#formatting characters into Dates
+
+clinical_data$`Date of Death` = coalesce(clinical_data$`Date of Death`, clinical_data_part2$`Date of Death`)
+#combines Dates from original data set (deaths) and new dates (alive as of) into one variable 'Date of Death`. Seperate column identifies whether or not patients have actually died or not. 
+
+
+## Creating an over all survival time variable in clinical data set
+
+clinical_data$`Date of Death` = as.Date(clinical_data$`Date of Death`)
+clinical_data$`Date of Diagnosis` = as.Date(clinical_data$`Date of Diagnosis`)
+
+
+#Filtering clinical data down to at most important variables 
+clinical_data = clinical_data[,1:42]
+  
+# Editing the debulking variable for typos and capitlization standardization 
+
+clinical_data = clinical_data %>% mutate(Debulking= case_when(
+  Debulking == "optimal" ~ "Optimal",
+  Debulking == "Opitmal" ~ "Optimal",
+   Debulking == "Optimal" ~ "Optimal",
+   Debulking == "Suboptimal" ~ "Suboptimal",
+  Debulking == "suboptimal" ~ "Suboptimal",
+  Debulking == "Interval" ~ "Interval",
+  TRUE ~ "NA",
+))
+
+clinical_data = clinical_data %>% replace_with_na(replace=list(Debulking=("NA")))
+clinical_data$Debulking = factor(clinical_data$Debulking, ordered=FALSE)
+
+#Variable for survival time 
+clinical_data = clinical_data %>% group_by(`Sample Name`) %>% mutate(survival_time = `Date of Death` - `Date of Diagnosis`) %>% ungroup() 
+
+
+# time to recurrence as numeric
+clinical_data$`Time to recurrence` = as.numeric(clinical_data$`Time to recurrence`)
+
+  
+# Filtering down the ovarian data set to just mean expressions
+
+ovarian_slim = ovarian_data %>% select(`Sample Name`, tag, Path, `Tissue Category`, `Cell ID`, `Cell X Position`, `Cell Y Position`, `Category Region ID`, `Distance from Tissue Category Edge (microns)`,`Nucleus Area (square microns)`, `Nucleus Area (percent)`, `Nucleus Compactness`, `Nucleus Minor Axis`, `Nucleus Major Axis`, `Nucleus Axis Ratio`, `Nucleus CK (Opal 780) Mean`, `Nucleus Ki67 (Opal 690) Mean`, `Nucleus CD8 (Opal 650) Mean`, `Nucleus IER3 (Opal 620) Mean`, `Nucleus pStat3 (Opal 570) Mean`, `Nucleus CD3 (Opal 540) Mean`, `Nucleus CD68 (Opal 520) Mean`, `Nucleus CD19 (Opal 480) Mean`, `Nucleus Dapi (DAPI) Mean`, `Nucleus Autofluorescence Mean`, `Cytoplasm Area (square microns)`, `Cytoplasm Area (percent)`, `Cytoplasm Compactness`, `Cytoplasm Minor Axis`, `Cytoplasm Major Axis`, `Cytoplasm Axis Ratio`,`Cytoplasm CK (Opal 780) Mean`, `Cytoplasm Ki67 (Opal 690) Mean`, `Cytoplasm CD8 (Opal 650) Mean`, `Cytoplasm IER3 (Opal 620) Mean`, `Cytoplasm pStat3 (Opal 570) Mean`, `Cytoplasm CD3 (Opal 540) Mean`, `Cytoplasm CD68 (Opal 520) Mean`, `Cytoplasm CD19 (Opal 480) Mean`, `Cytoplasm Dapi (DAPI) Mean`, `Cytoplasm Autofluorescence Mean`, `Membrane Area (square microns)`,`Membrane Area (percent)`, `Membrane Compactness`, `Membrane Minor Axis`, `Membrane Major Axis`, `Membrane Axis Ratio`, `Membrane CK (Opal 780) Mean`,`Membrane Ki67 (Opal 690) Mean`,  `Membrane CD8 (Opal 650) Mean`, `Membrane IER3 (Opal 620) Mean`,  `Membrane pStat3 (Opal 570) Mean`, `Membrane CD3 (Opal 540) Mean`,`Membrane CD68 (Opal 520) Mean`, `Membrane CD19 (Opal 480) Mean`, `Membrane Dapi (DAPI) Mean`, `Membrane Autofluorescence Mean`, `Entire Cell Area (square microns)` , `Entire Cell Area (percent)`, `Entire Cell Compactness`, `Entire Cell Minor Axis`, `Entire Cell Major Axis`, `Entire Cell Axis Ratio`, `Entire Cell CK (Opal 780) Mean`,`Entire Cell Ki67 (Opal 690) Mean`, `Entire Cell CD8 (Opal 650) Mean`, `Entire Cell IER3 (Opal 620) Mean`,`Entire Cell pStat3 (Opal 570) Mean`, `Entire Cell CD3 (Opal 540) Mean` , `Entire Cell CD68 (Opal 520) Mean` , `Entire Cell CD19 (Opal 480) Mean`, `Entire Cell Dapi (DAPI) Mean`, `Entire Cell Autofluorescence Mean`, `Slide ID`, `TMA Sector`, `TMA Row`,`TMA Column`, `TMA Field`, `Phenotype CD68`, `Phenotype CD19`, `Phenotype CD3`, `Phenotype CD8`, `Phenotype Ki67`, `Phenotype CD19 pStat3`, `Phenotype CD3 CD8`, `Phenotype CD68 pStat3`, `Phenotype CK`, `Phenotype CK IER3`, `Phenotype CK Ki67`, `Phenotype CK pStat3`, `Phenotype IER3`, `Phenotype Ki67`, `Phenotype pStat3`, `Phenotype CD3 CD8 Ki67`, blank_cells)
+
+
+
+
+image_with_clinical <- left_join(ovarian_slim, clinical_data, by = "Sample Name")
+
+
+
+#creating event variable for Recur function
+image_with_clinical = image_with_clinical %>% mutate(event = case_when(
+  `Time to recurrence` >=0 ~2,
+  TRUE ~1,
+))
+
+
+
+## Creating long data set and Phenotype variable 
+
+ovarian_data_long = image_with_clinical %>% gather(key="pclassification", value="Phenotype", c(`Phenotype CD68`, `Phenotype Ki67`, `Phenotype CK`, `Phenotype CD19`, `Phenotype pStat3`, `Phenotype CD3`, `Phenotype CD8`, `Phenotype CD3 CD8`, `Phenotype CK pStat3`, `Phenotype CK Ki67`, `Phenotype CD68 pStat3`, `Phenotype IER3`, `Phenotype CK IER3`, `Phenotype CD19 pStat3`, `Phenotype CD3 CD8 Ki67`))
+
+
+## Classifying Phenotypes into a cell type
+
+ovarian_data_long = ovarian_data_long %>% mutate(`Cell Type` = case_when(
+  Phenotype=="CD3+ CD8+" ~ "T Cell (CD8+)",
+  Phenotype=="CD68+" ~ "Macrophage",
+  Phenotype=="CK+" ~ "Tumor",
+  Phenotype == "CD19+" ~ "B Cell",
+  Phenotype=="CD3+ CD8-" ~ "T Cell (CD4+)",
+
+  TRUE ~ "other"
+))
+
+
+```
+
+# Things for powerpoint 
+
+## table of data structure 
+```{r}
+structure = ovarian_data %>% select(`Sample Name`, `Cell ID`, `Cell X Position`, `Cell Y Position`, `Phenotype CD68`, `Phenotype CD19`)
+
+#structure = structure[1150:1155,]
+structure = structure[10:15,]
+
+
+
+ structure %>% knitr::kable(digits = 3) %>%
+  kable_classic(full_width = F, html_font = "Cambria", font_size = 22)
+
+```
+12134.7 is the average number of cells for each sample 
+8636.5 is the average number of CK+ cells for each sample
+288 is the average number of T Cells (CD3+ CD8+)
+16 is the average number of Macrophages 
+4 is the average number of B Cells
+
+
+
+
+## graph of cell types 
+
+
+```{r}
+
+# high interaction
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,8,B]_[8194,54144].im3") %>% filter(`Cell Type` !="other")
+
+ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + geom_point() + theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right",
+  legend.title = element_text( size = 30),
+  legend.text = element_text(size = 25))
+
+# low interaction 
+
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,4,A]_[5972,45508].im3") %>% filter(`Cell Type` !="other")
+
+ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + geom_point() + theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right",
+  legend.title = element_text( size = 30),
+  legend.text = element_text(size = 25))
+
+```
