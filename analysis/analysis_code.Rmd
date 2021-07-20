@@ -53,7 +53,7 @@ theme_set(theme_bw() + theme(legend.position = "bottom"))
 ```{r}
 
 #Reading in data 
-ovarian_data <- read_cell_seg_data("~/Desktop/Research/MCR_Paper/data/Consolidated_data_copy.txt.zip")
+ovarian_data <- read_cell_seg_data("~/Desktop/Research/MCR_Paper/data/Consolidated_data.txt")
 
 # Keeping just tumor and stroma samples
 ovarian_data = ovarian_data %>%
