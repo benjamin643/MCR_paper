@@ -1,7 +1,7 @@
 ---
 title: "Narrative cell graph"
 date: '`r format(Sys.time(), "%Y-%m-%d")`'
-output: html_document
+output: word_document
 highlighter: highlight.js
 ---
 
@@ -37,7 +37,10 @@ theme_set(theme_bw() + theme(legend.position = "bottom"))
 ```
 
 
-```{r}
+```{r, eval = FALSE}
+
+# Note: These graphs require the full data set which is not being uploaded due to space requirements. However the data can be provided upon request. 
+
 ovarian_data <- read_cell_seg_data("~/Desktop/Research/ovarian_image_analyses/raw_data/Consolidated_data.txt")
 ovarian_data = ovarian_data %>%
   filter(`Tissue Category` != "Glass")
@@ -330,10 +333,11 @@ ovarian_data_long = ovarian_data_long %>% mutate(`Cell Type` = case_when(
 
 ```
 
+
 # Things for powerpoint 
 
 ## table of data structure 
-```{r}
+```{r, eval = FALSE}
 structure = ovarian_data %>% select(`Sample Name`, `Cell ID`, `Cell X Position`, `Cell Y Position`, `Phenotype CD68`, `Phenotype CD19`)
 
 #structure = structure[1150:1155,]
@@ -362,16 +366,216 @@ structure = structure[10:15,]
 # high interaction
 graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,8,B]_[8194,54144].im3") %>% filter(`Cell Type` !="other")
 
-ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + geom_point() + theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right",
-  legend.title = element_text( size = 30),
-  legend.text = element_text(size = 25))
+high_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 20),
+  legend.text = element_text(size = 20))
 
 # low interaction 
 
 graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,4,A]_[5972,45508].im3") %>% filter(`Cell Type` !="other")
 
-ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + geom_point() + theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right",
-  legend.title = element_text( size = 30),
-  legend.text = element_text(size = 25))
+low_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 20),
+  legend.text = element_text(size = 20))
+
+
+graphs = ggarrange(high_interaction, low_interaction,
+                   ncol = 1,
+                   common.legend = TRUE, legend = "bottom") + 
+  theme(legend.key.size = unit(1, 'cm'), #change legend key size
+        legend.key.height = unit(1, 'cm'), #change legend key height
+        legend.key.width = unit(1, 'cm'), #change legend key width
+        legend.title = element_text(size=20), #change legend title font size
+        legend.text = element_text(size=15))
+
+graphs
+```
+
+
+## graph of cell types 
+
+
+```{r, fig.width = 8, fig.height = 8}
+
+# high interaction
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,8,B]_[8194,54144].im3") %>% filter(`Cell Type` !="other")
+
+high_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 20),
+  legend.text = element_text(size = 15))
+
+# low interaction 
+
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,4,A]_[5972,45508].im3") %>% filter(`Cell Type` !="other")
+
+low_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 20),
+  legend.text = element_text(size = 15))
+
+
+graphs = ggarrange(high_interaction, low_interaction,
+                   ncol = 1,
+                   common.legend = TRUE, legend = "bottom") + 
+  theme(legend.key.size = unit(1, 'cm'), #change legend key size
+        legend.key.height = unit(1, 'cm'), #change legend key height
+        legend.key.width = unit(1, 'cm'), #change legend key width
+        legend.title = element_text(size=15), #change legend title font size
+        legend.text = element_text(size=10))
+
+graphs
+```
+
+
+```{r, fig.width = 8, fig.height = 10}
+
+# high interaction
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,8,B]_[8194,54144].im3") %>% filter(`Cell Type` !="other")
+
+high_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 35),
+  legend.text = element_text(size = 25), 
+  axis.title.x = element_text(size = 25),
+  axis.title.y = element_text(size =25))
+
+# low interaction 
+
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,4,A]_[5972,45508].im3") %>% filter(`Cell Type` !="other")
+
+low_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 35),
+  legend.text = element_text(size = 25), 
+  axis.title.x = element_text(size = 25),
+  axis.title.y = element_text(size =25))
+
+
+graphs = ggarrange(high_interaction, low_interaction,
+                   ncol = 1,
+                   common.legend = TRUE, legend = "right") + 
+  theme( #change legend key width
+        legend.title = element_text(size=10), #change legend title font size
+        legend.text = element_text(size=8), 
+   axis.title.x = element_text(size = 25),
+  axis.title.y = element_text(size =25))
+
+graphs
+```
+
+```{r, fig.width = 8, fig.height = 10}
+
+# high interaction
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,8,B]_[8194,54144].im3") %>% filter(`Cell Type` !="other")
+
+high_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 35),
+  legend.text = element_text(size = 25), 
+  axis.title.x = element_text(size = 30),
+  axis.title.y = element_text(size =30))
+
+
+
+
+# low interaction 
+
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,4,A]_[5972,45508].im3") %>% filter(`Cell Type` !="other")
+
+low_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 35),
+  legend.text = element_text(size = 25), 
+  axis.title.x = element_text(size = 30),
+  axis.title.y = element_text(size =30))
+
+
+graphs = ggarrange(high_interaction, low_interaction,
+                   ncol = 1,
+                   common.legend = TRUE, legend = "right") + 
+  theme( #change legend key width
+        legend.title = element_text(size=10), #change legend title font size
+        legend.text = element_text(size=8),
+        axis.title.x = element_text(size = 30),
+        axis.title.y = element_text(size =30))
+
+graphs
+```
+
+
+```{r, fig.width = 10, fig.height = 8}
+
+# high interaction
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,8,B]_[8194,54144].im3") %>% filter(`Cell Type` !="other")
+
+high_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 35),
+  legend.text = element_text(size = 25), 
+  axis.title.x = element_text(size = 30),
+  axis.title.y = element_text(size =30))
+
+
+high_interaction
+
+```
+
+
+
+```{r, fig.width = 12, fig.height = 8}
+
+# high interaction
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,8,B]_[8194,54144].im3") %>% filter(`Cell Type` !="other")
+
+high_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 35),
+  legend.text = element_text(size = 25), 
+  axis.title.x = element_text(size = 30),
+  axis.title.y = element_text(size =30),
+  legend.position =  "right")
+
+
+high_interaction
+
+```
+
+```{r, fig.width = 8, fig.height = 10}
+
+# high interaction
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,8,B]_[8194,54144].im3") %>% filter(`Cell Type` !="other")
+
+high_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 35),
+  legend.text = element_text(size = 25), 
+  axis.title.x = element_text(size = 30),
+  axis.title.y = element_text(size =30),
+  legend.position =  "right")
+
+
+high_interaction
+
+```
+
+
+```{r, fig.width = 8, fig.height = 8}
+
+# high interaction
+graph = ovarian_data_long %>% filter(`Sample Name`== "A_Core[1,8,B]_[8194,54144].im3") %>% filter(`Cell Type` !="other")
+
+high_interaction = ggplot(graph, aes(x=`Cell X Position`, y=`Cell Y Position`, color=`Cell Type`)) + 
+  geom_point() +
+  theme(legend.title = element_text( size = 35),
+  legend.text = element_text(size = 25), 
+  axis.title.x = element_text(size = 30),
+  axis.title.y = element_text(size =30),
+  legend.position =  "right")
+
+
+high_interaction
 
 ```

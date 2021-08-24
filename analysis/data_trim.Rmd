@@ -1,0 +1,620 @@
+---
+title: "data_trim"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+
+```{r setup, message=FALSE, echo=TRUE, warning=FALSE}
+
+# html_document: 
+ #   code_folding: hide
+  #  toc: true
+   # toc_float: true
+
+
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(naniar)
+library(phenoptr)
+library(phenoptrReports)
+library(rtree)
+library(ggpubr)
+library(zoo)
+library(survival)
+library(lubridate)
+library(survminer)
+library(reReg)
+library(kableExtra)
+library(table1)
+library(gtsummary)
+
+knitr::opts_chunk$set(echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+suppressMessages(library(tidyverse))
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+
+```
+
+
+
+```{r}
+
+#Reading in data 
+ovarian_data <- read_cell_seg_data("~/Desktop/Research/MCR_Paper/data/Consolidated_data.txt")
+
+# Keeping just tumor and stroma samples
+ovarian_data = ovarian_data %>%
+  filter(`Tissue Category` != "Glass")
+
+
+#removing initial descriptor characters from `Sample Name` variable so as to match with the format of the clinical data 
+ovarian_data$`Sample Name` = substr(ovarian_data$`Sample Name`, 21, 100)
+
+
+# Creating a control variable to identify the four control samples that are not related to the ovarian study
+ovarian_data = ovarian_data %>% mutate(control = case_when(
+  `Sample Name` == "A_Core[1,7,A]_[6035,51922].im3" ~ 1,
+  `Sample Name` == "A_Core[1,8,A]_[6099,54080].im3" ~ 1,
+  `Sample Name` == "B_Core[1,7,A]_[5838,48555].im3" ~ 1,
+  `Sample Name` == "B_Core[1,8,A]_[5838,50714].im3" ~ 1,
+  TRUE ~ 0,
+))
+
+#Filtering out the four control studies
+
+ovarian_data = ovarian_data %>% filter(control=="0")
+
+
+## Creating phenotype variables for the combinations. This is done because in order to identify some cell types, one phenotype marker is not enough
+
+ovarian_data = ovarian_data %>% mutate(`Phenotype CD3 CD8`=case_when(
+  `Phenotype CD3` =="CD3+" & `Phenotype CD8`=="CD8+" ~ "CD3+ CD8+",
+  `Phenotype CD3` =="CD3+" & `Phenotype CD8` =="CD8-" ~ "CD3+ CD8-",
+  TRUE~ ""
+))
+
+#Joining clinical with data with ovarian data 
+
+
+clinical_data <- read_excel("~/Desktop/Research/MCR_Paper/data/Clinical_Attributes_and_more.xlsx", 
+col_types = c("numeric", "text", "numeric",  "text", "text", "numeric", "numeric",  "numeric", "text", "numeric", "date",  "date", "numeric", "numeric", "text",  "numeric", "numeric", "text", "date",  "date", "date", "text", "text", "text",   "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",   "numeric", "numeric", "numeric", 
+ "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",  "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text",  "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text", "text"))
+
+names(clinical_data)[names(clinical_data) == "Death (1=yes, 0=no)"] <- "Death"
+
+names(clinical_data)[names(clinical_data) == "BRCA Mutation Detected (Y=Test Positive, N=Test Negative, N/A=Not tested)"] <- "BRCA Type"
+
+names(clinical_data)[names(clinical_data) == "BRCA-mutation (Y=1, N=0, N/A = BLANK)"] <- "BRCA Binary"
+
+names(clinical_data)[names(clinical_data) == "Recurrence...19"] <- "Recurence1"
+
+names(clinical_data)[names(clinical_data) == "Recurrence...20"] <- "Recurence2"
+
+names(clinical_data)[names(clinical_data) == "Recurrence...21"] <- "Recurence3"
+
+
+## Note: There are 5 sample names in the distance data set that do not appear in the clinical data set. 
+
+## Changing format for date of death to be able to grab the still alive as of. The clinical data set is being uploaded again so that the still alive as of can be reformatted into a date. It is then combined back into the original data set. The variable date of death now has solely dates as inputs and the column 'Death', which takes a binary input, distinguishes who is alive and dead for censoring purposes. 
+
+
+clinical_data_part2 <- read_excel("~/Desktop/Research/MCR_Paper/data/Clinical_Attributes_and_more.xlsx", 
+    col_types = c("numeric", "text", "numeric", 
+        "text", "text", "numeric", "numeric", 
+        "numeric", "text", "numeric", "text", 
+        "text", "numeric", "numeric", "text", 
+        "numeric", "numeric", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "numeric", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text"))
+
+clinical_data_part2 = clinical_data_part2 %>% select(`Sample Name`, `Date of Death`)
+
+
+#three different beginnings for alive as.... "Alive as", "Alive as of", "last visit" Below reformats all to "Alive as"
+
+clinical_data_part2$`Date of Death` = gsub("last visit", "Alive as",clinical_data_part2$`Date of Death` )
+#setting up format of variable to be able to use substr. Need to chance "last visit" to Alive as.
+
+clinical_data_part2$`Date of Death` = gsub("Alive as of", "Alive as",clinical_data_part2$`Date of Death` )
+# setting up format of variable to be able to use substr. Need to chance "Alive as of" to "Alive as".
+
+clinical_data_part2$`Date of Death` = substr(clinical_data_part2$`Date of Death`, 10, 100)
+#now cutting off the first 10 string characters 
+
+
+#formatting characters into Dates
+
+clinical_data_part2$`Date of Death` =  mdy(clinical_data_part2$`Date of Death`)
+
+
+#combines Dates from original data set (deaths) and new dates (alive as of) into one variable 'Date of Death`. Seperate column identifies whether or not patients have actually died or not. 
+
+clinical_data$`Date of Death` = coalesce(clinical_data$`Date of Death`, clinical_data_part2$`Date of Death`)
+
+
+
+## Creating an overall survival time variable in clinical data set (date of death - date of diagnosis)
+
+clinical_data$`Date of Death` = as.Date(clinical_data$`Date of Death`)
+clinical_data$`Date of Diagnosis` = as.Date(clinical_data$`Date of Diagnosis`)
+
+
+#Filtering clinical data down to the most important variables. The clinical data set has many variables, such as a calculation of total percentage of cells. We recalculated those as seen in the code below and so we take only relevant clinical attributes such as date of death. 
+clinical_data = clinical_data[,1:29]
+  
+
+## changing date of death for sample A_Core[1,1,H]_[20830,38587].im3 to 8/7/2019 - in the data set, date is listed as 8/72019.
+
+clinical_data = clinical_data %>% mutate(`Date of Death` = case_when(
+  `Sample Name` == "A_Core[1,1,H]_[20830,38587].im3" ~ as.Date(mdy("8/7/2019")),
+  TRUE ~ `Date of Death`
+))
+
+
+# Editing the debulking variable for typos and capitalization standardization 
+
+clinical_data = clinical_data %>% mutate(Debulking= case_when(
+  Debulking == "optimal" ~ "Optimal",
+  Debulking == "Opitmal" ~ "Optimal",
+   Debulking == "Optimal" ~ "Optimal",
+   Debulking == "Suboptimal" ~ "Suboptimal",
+  Debulking == "suboptimal" ~ "Suboptimal",
+  Debulking == "Interval" ~ "Interval",
+  TRUE ~ "NA",
+))
+
+clinical_data = clinical_data %>% replace_with_na(replace=list(Debulking=("NA")))
+clinical_data$Debulking = factor(clinical_data$Debulking, ordered=FALSE)
+
+#Variable for survival time 
+clinical_data = clinical_data %>% group_by(`Sample Name`) %>% mutate(survival_time = `Date of Death` - `Date of Diagnosis`) %>% ungroup() 
+
+
+# time to recurrence as numeric
+clinical_data$`Time to recurrence` = as.numeric(clinical_data$`Time to recurrence`)
+
+# recurrence binary 
+
+clinical_data = clinical_data %>% group_by(`Sample Name`) %>% mutate(recurrence_binary = if_else(is.na(Recurence1), 0, 1)) %>% ungroup()
+
+# time to event binary 
+
+clinical_data = clinical_data %>% group_by(`Sample Name`) %>% mutate(time_to_event_binary = case_when(
+  recurrence_binary == "1" ~ "1",
+  Death == "1" ~ "1",
+  TRUE ~ "0"
+)) %>% ungroup()
+
+
+clinical_data$time_to_event_binary = as.numeric(clinical_data$time_to_event_binary)
+
+# Recurrence date formatting; looking at just the first date from the recurrence column. 
+
+clinical_data$recurrence_date = ymd(clinical_data$Recurence1)
+
+# time to recurrence
+clinical_data$time_to_recurrence =  clinical_data$recurrence_date - clinical_data$`Date of Diagnosis`
+
+# Need variable that is time to recurrence or survival time 
+
+clinical_data = clinical_data %>% group_by(`Sample Name`) %>% mutate(time_to_event = if_else(is.na(time_to_recurrence), survival_time, time_to_recurrence)) %>% ungroup()
+
+## Removing the following sample from the cox_data set (which will include the survival curves because it does not have an exact date for date of death / last known alive. ? )
+
+clinical_data = clinical_data %>% filter(`Sample Name` != "B_Core[1,1,B]_[7934,35665].im3")
+  
+# Filtering down the ovarian data set to just mean expressions; originally included extra variables such as min, max, standard deviation; was trying to make later operations quicker by slimming down data set. 
+
+ovarian_slim = ovarian_data %>% select(`Sample Name`, tag, Path, `Tissue Category`, `Cell ID`, `Cell X Position`, `Cell Y Position`, `Category Region ID`, `Distance from Tissue Category Edge (microns)`,`Nucleus Area (square microns)`, `Nucleus Area (percent)`, `Nucleus Compactness`, `Nucleus Minor Axis`, `Nucleus Major Axis`, `Nucleus Axis Ratio`, `Nucleus CK (Opal 780) Mean`, `Nucleus Ki67 (Opal 690) Mean`, `Nucleus CD8 (Opal 650) Mean`, `Nucleus IER3 (Opal 620) Mean`, `Nucleus pStat3 (Opal 570) Mean`, `Nucleus CD3 (Opal 540) Mean`, `Nucleus CD68 (Opal 520) Mean`, `Nucleus CD19 (Opal 480) Mean`, `Nucleus Dapi (DAPI) Mean`, `Nucleus Autofluorescence Mean`, `Cytoplasm Area (square microns)`, `Cytoplasm Area (percent)`, `Cytoplasm Compactness`, `Cytoplasm Minor Axis`, `Cytoplasm Major Axis`, `Cytoplasm Axis Ratio`,`Cytoplasm CK (Opal 780) Mean`, `Cytoplasm Ki67 (Opal 690) Mean`, `Cytoplasm CD8 (Opal 650) Mean`, `Cytoplasm IER3 (Opal 620) Mean`, `Cytoplasm pStat3 (Opal 570) Mean`, `Cytoplasm CD3 (Opal 540) Mean`, `Cytoplasm CD68 (Opal 520) Mean`, `Cytoplasm CD19 (Opal 480) Mean`, `Cytoplasm Dapi (DAPI) Mean`, `Cytoplasm Autofluorescence Mean`, `Membrane Area (square microns)`,`Membrane Area (percent)`, `Membrane Compactness`, `Membrane Minor Axis`, `Membrane Major Axis`, `Membrane Axis Ratio`, `Membrane CK (Opal 780) Mean`,`Membrane Ki67 (Opal 690) Mean`,  `Membrane CD8 (Opal 650) Mean`, `Membrane IER3 (Opal 620) Mean`,  `Membrane pStat3 (Opal 570) Mean`, `Membrane CD3 (Opal 540) Mean`,`Membrane CD68 (Opal 520) Mean`, `Membrane CD19 (Opal 480) Mean`, `Membrane Dapi (DAPI) Mean`, `Membrane Autofluorescence Mean`, `Entire Cell Area (square microns)` , `Entire Cell Area (percent)`, `Entire Cell Compactness`, `Entire Cell Minor Axis`, `Entire Cell Major Axis`, `Entire Cell Axis Ratio`, `Entire Cell CK (Opal 780) Mean`,`Entire Cell Ki67 (Opal 690) Mean`, `Entire Cell CD8 (Opal 650) Mean`, `Entire Cell IER3 (Opal 620) Mean`,`Entire Cell pStat3 (Opal 570) Mean`, `Entire Cell CD3 (Opal 540) Mean` , `Entire Cell CD68 (Opal 520) Mean` , `Entire Cell CD19 (Opal 480) Mean`, `Entire Cell Dapi (DAPI) Mean`, `Entire Cell Autofluorescence Mean`, `Slide ID`, `TMA Sector`, `TMA Row`,`TMA Column`, `TMA Field`, `Phenotype CD68`, `Phenotype CD19`, `Phenotype CD3`, `Phenotype CD8`, `Phenotype Ki67`, `Phenotype CD3 CD8`, `Phenotype CK`,  `Phenotype pStat3`)
+
+
+
+
+image_with_clinical <- left_join(ovarian_slim, clinical_data, by = "Sample Name")
+
+#filtering out patients for whom this is not the primary tumor (based on reviewer comments from AACR first submission)
+#image_with_clinical = image_with_clinical %>% filter(Primary == "1")
+
+
+#creating event variable for Recur function
+image_with_clinical = image_with_clinical %>% mutate(event = case_when(
+  `Time to recurrence` >=0 ~2,
+  TRUE ~1,
+))
+
+
+
+## Creating long data set and Phenotype variable 
+
+ovarian_data_long = image_with_clinical %>% gather(key="pclassification", value="Phenotype", c(`Phenotype CD68`, `Phenotype Ki67`, `Phenotype CK`, `Phenotype CD19`, `Phenotype pStat3`, `Phenotype CD3`, `Phenotype CD8`, `Phenotype CD3 CD8`))
+
+
+## Classifying Phenotypes into a cell type
+
+ovarian_data_long = ovarian_data_long %>% mutate(`Cell Type` = case_when(
+  Phenotype=="CD3+ CD8+" ~ "T Cell (CD8+)",
+  Phenotype=="CD68+" ~ "Macrophage",
+  Phenotype=="CK+" ~ "Tumor",
+  Phenotype == "CD19+" ~ "B Cell",
+  Phenotype=="CD3+ CD8-" ~ "T Cell (CD4+)",
+
+  TRUE ~ "other"
+))
+
+
+# Filtering data to phenotypes of interest so cell totals / percents can be calculated quicker: 
+
+ovarian_long_filtered = ovarian_data_long %>% filter(Phenotype %in% c("CD19+", "CD68+", "CK+", "pStat3+", "CD3+ CD8+", "CD3+ CD8-"))
+
+
+
+# takes from ovarian_long_filtered; just the cells of interest
+cell_totals = ovarian_long_filtered %>% group_by(`Sample Name`, `Phenotype`) %>% summarise(total_cells=n()) %>% arrange(Phenotype) %>% pivot_wider(names_from=Phenotype, values_from=total_cells)  %>% ungroup()
+#^going back to long data set after filtering in order to table total cells and total cells in percents 
+
+# takes from ovarian_data; need the total to come from all cells. 
+totals_column = ovarian_data %>% group_by(`Sample Name`) %>% mutate(total=length(`Cell ID`)) %>% select(`Sample Name`, total) %>% unique() %>% arrange(`Sample Name`) %>% ungroup()
+# creating variable for total cells for each sample
+
+
+# Cell Counts totals and percent totals 
+
+cell_totals = left_join(cell_totals, totals_column)
+phenos <- c(unique(ovarian_long_filtered$Phenotype), "total")
+cell_totals = cell_totals %>% arrange(`Sample Name`)
+
+
+
+## Cell Percents by Phenotype
+cell_totals = cell_totals %>% arrange(`Sample Name`) %>%  group_by(`Sample Name`) %>%  mutate(`CD19+ Percent`=round((`CD19+`/total)*100, 2),`CK+ Percent`=round((`CK+`/total)*100,2), `CD3+ CD8+ Percent`=round((`CD3+ CD8+`/total)*100,2),`CD3+ CD8- Percent`=round((`CD3+ CD8-`/total)*100,2), `CD68+ Percent`=round((`CD68+`/total)*100,2),  `pStat3+ Percent`= round((`pStat3+`/total)*100,2)) %>% ungroup()
+
+
+# Cell totals Tumor
+
+cell_totals_tumor = ovarian_long_filtered %>% filter(`Tissue Category`=="Tumor") %>% group_by(`Sample Name`, `Phenotype`) %>% summarise(total_cells=n()) %>% arrange(Phenotype) %>% pivot_wider(names_from=Phenotype, values_from=total_cells)  %>% ungroup()
+#^going back to long data set after filtering in order to table total cells and total cells in percents 
+
+
+totals_column_tumor = ovarian_data %>% filter(`Tissue Category`=="Tumor") %>%  group_by(`Sample Name`) %>% mutate(total=length(`Cell ID`)) %>% select(`Sample Name`, total) %>% unique() %>% arrange(`Sample Name`) %>% ungroup()
+# creating variable for total cells for each sample
+
+
+# Cell Counts totals and percent totals 
+
+ovarian_long_filtered_tumor = ovarian_long_filtered %>% filter(`Tissue Category`=="Tumor")
+
+cell_totals_tumor = left_join(cell_totals_tumor, totals_column_tumor)
+phenos <- c(unique(ovarian_long_filtered_tumor$Phenotype), "total")
+cell_totals_tumor = cell_totals_tumor %>% arrange(`Sample Name`)
+
+
+# If there are zero cells of a specific cell type, the count function returns an NA. Changing NA values to zero 
+
+cell_totals_tumor[is.na(cell_totals_tumor)] <- 0
+
+## Cell Percents by Phenotype
+cell_totals_tumor = cell_totals_tumor %>% arrange(`Sample Name`) %>%  group_by(`Sample Name`) %>%  mutate(`CD19+ Percent`=round((`CD19+`/total)*100, 2),`CK+ Percent`=round((`CK+`/total)*100,2), `CD3+ CD8+ Percent`=round((`CD3+ CD8+`/total)*100,2),`CD3+ CD8- Percent`=round((`CD3+ CD8-`/total)*100,2), `CD68+ Percent`=round((`CD68+`/total)*100,2),  `pStat3+ Percent`= round((`pStat3+`/total)*100,2)) %>% ungroup()
+
+
+## setting up data set with one row for each sample so sample specific analysiis can be conducted (kaplan-meier and cox prorportional ) 
+
+## Distance data frames 
+## Macro_bcell
+
+phenos <- c("CD68+", "CD19+")
+
+# Calculating the nearest neighbor distance for each cell CD68+ and CD19+ cell. 
+
+distance_macro_bcell <- ovarian_data_long %>% filter(Phenotype %in% c("CD68+", "CD19+")) %>% filter(`Tissue Category`=="Tumor") %>%
+  group_by(`Slide ID`,`Sample Name`) %>%
+  do(bind_cols(., find_nearest_distance(., phenos))) %>% ungroup()
+
+
+# Counting the number of CD19+ Cells that have at least one CD68+ cell within 25 microns. 
+
+
+count_within_macro_bcell = distance_macro_bcell %>% filter(`Tissue Category`=="Tumor")  %>% group_by(`Sample Name`) %>% 
+  do(count_within(., from='CD19+', to='CD68+', radius=25)) %>% ungroup() 
+
+#Selecting just the clinical variables neccesary, sample name, survival time, and death (for censoring)
+clinical_data_count = image_with_clinical %>% select(`Sample Name`, survival_time, Death, Primary) %>% unique()
+
+
+#Joining the cell totals in order to standardize the interaction variable across samples. 
+
+count_within_macro_bcell = left_join(count_within_macro_bcell, clinical_data_count)
+count_within_macro_bcell = left_join(count_within_macro_bcell, cell_totals_tumor)
+
+count_within_macro_bcell = count_within_macro_bcell %>% group_by(`Sample Name`) %>% mutate(from_with_sd = (from_with/sum(`CD68+`,`CD19+`))*100) %>% ungroup()
+
+# standardizing the from_with count by dividing each sample by the total number of b cells and macrophages for that sample and multiplying by 100 for a percent of b cells and macrophages within 25 microns of each other of total b cells and macrophages
+
+
+
+count_within_macro_bcell = count_within_macro_bcell %>% mutate(distance_to_binary=case_when(
+  from_with_sd > quantile(count_within_macro_bcell$from_with_sd, .5, na.rm=TRUE) ~ 1,
+  TRUE ~ 0,
+))
+
+#reformatting names
+
+names(count_within_macro_bcell)[names(count_within_macro_bcell) == "from_with"] <- "from_with_macro_bcell"
+names(count_within_macro_bcell)[names(count_within_macro_bcell) == "from_with_sd"] <- "from_with_macro_bcell_standard"
+
+
+# survival curve function  for Kaplan Meier
+sf_distance = surv_fit(Surv(survival_time, Death) ~ distance_to_binary, conf.type = "log-log", data=count_within_macro_bcell)
+
+
+# Selecting just sample size and from with counts from count_within_data frame
+
+count1 =  count_within_macro_bcell %>% select(`Sample Name`, from_with_macro_bcell, from_with_macro_bcell_standard, distance_to_binary)
+
+
+# Combining cell_totals_tumor with count_within_data
+
+
+# Cox regression data - single row per sample - Cell totals in tumor regions, clinical data, distance data, 
+cox_data = left_join(cell_totals_tumor, clinical_data)
+
+cox_data = left_join(cox_data, count1)
+
+
+#changing factor levels for debulking 
+cox_data$Debulking = relevel(cox_data$Debulking, ref = "Optimal")
+
+# changing Grade to factor and setting 3 as ref (most common)
+
+cox_data$Grade = factor(cox_data$Grade)
+cox_data$Grade = relevel(cox_data$Grade, ref = "3")
+
+
+# Changing structure of PARPi variable to have 0 for no, 1 for yes. Setting as factor variable with reference 0
+cox_data$PARPi = ifelse(cox_data$PARPi=="Y", 1, 0)
+cox_data$PARPi= factor(cox_data$PARPi)
+cox_data$PARPi = relevel(cox_data$PARPi, ref = "0")
+
+# Setting Primary as factor variable with reference category = 1
+
+cox_data$Primary = factor(cox_data$Primary)
+cox_data$Primary = relevel(cox_data$Primary, ref = "1")
+
+
+# Setting Treatment effect as a factor variable with reference category 0
+
+cox_data$`Treatment Effect` = factor(cox_data$`Treatment Effect`)
+cox_data$`Treatment Effect` = relevel(cox_data$`Treatment Effect`, ref = "0")
+
+
+## Removing the following sample from the cox_data set (which will include the survival curves because it does not have an exact date for date of death / last known alive. ? )
+
+cox_data = cox_data %>% filter(`Sample Name` != "B_Core[1,1,B]_[7934,35665].im3")
+
+```
+
+```{r}
+## from with 25 microns - from to CD3+ CD8+ to CD3+ CD8-
+
+phenos <- c("CD3+ CD8+", "CD3+ CD8-")
+# Calculating the nearest neighbor distance for each cell CD68+ and CD19+ cell. 
+
+distance_cd4_tcell <- ovarian_data_long %>% filter(Phenotype %in% c("CD3+ CD8+", "CD3+ CD8-")) %>% filter(`Tissue Category`=="Tumor") %>%
+  group_by(`Slide ID`,`Sample Name`) %>%
+  do(bind_cols(., find_nearest_distance(., phenos))) %>% ungroup()
+
+
+# Counting the number of CD19+ Cells that have at least one CD68+ cell within 25 microns. 
+
+
+count_within_cd4_tcell = distance_cd4_tcell %>% filter(`Tissue Category`=="Tumor")  %>% group_by(`Sample Name`) %>% 
+  do(count_within(., from='CD3+ CD8+', to='CD3+ CD8-', radius=25)) %>% ungroup() 
+
+#Selecting just the clinical variables neccesary, sample name, survival time, and death (for censoring)
+clinical_data_count = image_with_clinical %>% select(`Sample Name`, survival_time, Death, Primary) %>% unique()
+
+
+#Joining the cell totals in order to standardize the interaction variable across samples. 
+
+count_within_cd4_tcell = left_join(count_within_cd4_tcell, clinical_data_count)
+count_within_cd4_tcell = left_join(count_within_cd4_tcell, cell_totals_tumor)
+
+count_within_cd4_tcell = count_within_cd4_tcell %>% group_by(`Sample Name`) %>% mutate(from_with_sd = (from_with/sum(`CD3+ CD8+`, `CD3+ CD8-`))*100) %>% ungroup()
+
+# standardizing the from_with count by dividing each sample by the total number of b cells and macrophages for that sample and multiplying by 100 for a percent of b cells and macrophages within 25 microns of each other of total b cells and macrophages
+
+count_within_cd4_tcell = count_within_cd4_tcell %>% mutate(distance_to_binary=case_when(
+  from_with_sd > quantile(count_within_cd4_tcell$from_with_sd, .5, na.rm=TRUE) ~ 1,
+  TRUE ~ 0,
+))
+
+#70% at 21
+
+names(count_within_cd4_tcell)[names(count_within_cd4_tcell) == "from_with"] <- "from_with_cd4_tcell"
+names(count_within_cd4_tcell)[names(count_within_cd4_tcell) == "from_with_sd"] <- "from_with_cd4_tcell_standard"
+
+
+
+## from with 25 microns - from CD3+ CD8+ to CD68+ 
+phenos <- c("CD3+ CD8+", "CD68+")
+# Calculating the nearest neighbor distance for each cell CD68+ and CD19+ cell. 
+
+distance_tcell_macro <- ovarian_data_long %>% filter(Phenotype %in% c("CD3+ CD8+", "CD68+")) %>% filter(`Tissue Category`=="Tumor") %>%
+  group_by(`Slide ID`,`Sample Name`) %>%
+  do(bind_cols(., find_nearest_distance(., phenos))) %>% ungroup()
+
+
+# Counting the number of CD19+ Cells that have at least one CD68+ cell within 25 microns. 
+
+
+count_within_tcell_macro = distance_tcell_macro %>% filter(`Tissue Category`=="Tumor")  %>% group_by(`Sample Name`) %>% 
+  do(count_within(., from='CD3+ CD8+', to='CD68+', radius=25)) %>% ungroup() 
+
+#Selecting just the clinical variables neccesary, sample name, survival time, and death (for censoring)
+clinical_data_count = image_with_clinical %>% select(`Sample Name`, survival_time, Death, Primary) %>% unique()
+
+
+#Joining the cell totals in order to standardize the interaction variable across samples. 
+
+count_within_tcell_macro = left_join(count_within_tcell_macro, clinical_data_count)
+count_within_tcell_macro = left_join(count_within_tcell_macro, cell_totals_tumor)
+
+count_within_tcell_macro = count_within_tcell_macro %>% group_by(`Sample Name`) %>% mutate(from_with_sd = (from_with/sum(`CD3+ CD8+`, `CD68+`))*100) %>% ungroup()
+
+# standardizing the from_with count by dividing each sample by the total number of b cells and macrophages for that sample and multiplying by 100 for a percent of b cells and macrophages within 25 microns of each other of total b cells and macrophages
+
+count_within_tcell_macro = count_within_tcell_macro %>% mutate(distance_to_binary=case_when(
+  from_with_sd > quantile(count_within_tcell_macro$from_with_sd, .5, na.rm=TRUE) ~ 1,
+  TRUE ~ 0,
+))
+
+#70% at 0.1170829 
+
+names(count_within_tcell_macro)[names(count_within_tcell_macro) == "from_with"] <- "from_with_tcell_macro"
+names(count_within_tcell_macro)[names(count_within_tcell_macro) == "from_with_sd"] <- "from_with_tcell_macro_standard"
+
+
+
+
+## from with 25 microns - from CD3+ CD8- to CD68+ 
+phenos <- c("CD3+ CD8-", "CD68+")
+# Calculating the nearest neighbor distance for each cell CD68+ and CD19+ cell. 
+
+distance_cd4_macro <- ovarian_data_long %>% filter(Phenotype %in% c("CD3+ CD8-", "CD68+")) %>% filter(`Tissue Category`=="Tumor") %>%
+  group_by(`Slide ID`,`Sample Name`) %>%
+  do(bind_cols(., find_nearest_distance(., phenos))) %>% ungroup()
+
+
+# Counting the number of CD19+ Cells that have at least one CD68+ cell within 25 microns. 
+
+
+count_within_cd4_macro = distance_cd4_macro %>% filter(`Tissue Category`=="Tumor")  %>% group_by(`Sample Name`) %>% 
+  do(count_within(., from='CD3+ CD8-', to='CD68+', radius=25)) %>% ungroup() 
+
+#Selecting just the clinical variables neccesary, sample name, survival time, and death (for censoring)
+clinical_data_count = image_with_clinical %>% select(`Sample Name`, survival_time, Death, Primary) %>% unique()
+
+
+#Joining the cell totals in order to standardize the interaction variable across samples. 
+
+count_within_cd4_macro = left_join(count_within_cd4_macro, clinical_data_count)
+count_within_cd4_macro = left_join(count_within_cd4_macro, cell_totals_tumor)
+
+count_within_cd4_macro = count_within_cd4_macro %>% group_by(`Sample Name`) %>% mutate(from_with_sd = (from_with/sum(`CD3+ CD8-`, `CD68+`))*100) %>% ungroup()
+
+# standardizing the from_with count by dividing each sample by the total number of b cells and macrophages for that sample and multiplying by 100 for a percent of b cells and macrophages within 25 microns of each other of total b cells and macrophages
+
+count_within_cd4_macro = count_within_cd4_macro %>% mutate(distance_to_binary=case_when(
+  from_with_sd > quantile(count_within_cd4_macro$from_with_sd, .5, na.rm=TRUE) ~ 1,
+  TRUE ~ 0,
+))
+
+names(count_within_cd4_macro )[names(count_within_cd4_macro) == "from_with"] <- "from_with_cd4_macro"
+names(count_within_cd4_macro )[names(count_within_cd4_macro) == "from_with_sd"] <- "from_with_cd4_macro_standard"
+```
+
+
+
+```{r}
+
+filename = str_c(str_replace_all(Sys.Date(), "-", ""), "_cox_data.Rdata")
+save(cox_data, file = here::here("data", filename))
+
+filename = str_c(str_replace_all(Sys.Date(), "-", ""), "count_within_cd4_tcell.Rdata")
+save(count_within_cd4_tcell, file = here::here("data", filename))
+
+filename = str_c(str_replace_all(Sys.Date(), "-", ""), "count_within_tcell_macro.Rdata")
+save(count_within_tcell_macro, file = here::here("data", filename))
+
+filename = str_c(str_replace_all(Sys.Date(), "-", ""), "count_within_cd4_macro.Rdata")
+save(count_within_cd4_macro, file = here::here("data", filename))
+
+filename = str_c(str_replace_all(Sys.Date(), "-", ""), "count_within_macro_bcell.Rdata")
+save(count_within_macro_bcell, file = here::here("data", filename))
+
+
+filename = str_c(str_replace_all(Sys.Date(), "-", ""), "ovarian_data_long.Rdata")
+save(ovarian_data_long, file = here::here("data", filename))
+```
+
+
